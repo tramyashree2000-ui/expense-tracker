@@ -1,71 +1,57 @@
 const express = require("express");
-const Database = require("better-sqlite3");
-const { v4: uuidv4 } = require("uuid");
 const cors = require("cors");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = new Database("expenses.db");
+let expenses = [];
+let idempotencyStore = {};
 
-// Create table
-db.prepare(`
-CREATE TABLE IF NOT EXISTS expenses (
-  id TEXT PRIMARY KEY,
-  amount INTEGER,
-  category TEXT,
-  description TEXT,
-  date TEXT,
-  created_at TEXT,
-  idempotency_key TEXT UNIQUE
-)
-`).run();
-
+// ✅ POST (idempotent)
 app.post("/expenses", (req, res) => {
   const key = req.headers["idempotency-key"];
 
-  const existing = db
-    .prepare("SELECT * FROM expenses WHERE idempotency_key = ?")
-    .get(key);
-
-  if (existing) return res.json(existing);
+  if (key && idempotencyStore[key]) {
+    return res.json(idempotencyStore[key]);
+  }
 
   const { amount, category, description, date } = req.body;
 
-  const id = uuidv4();
-  const created_at = new Date().toISOString();
+  const expense = {
+    id: uuidv4(),
+    amount,
+    category,
+    description,
+    date,
+    created_at: new Date().toISOString()
+  };
 
-  db.prepare(`
-    INSERT INTO expenses 
-    (id, amount, category, description, date, created_at, idempotency_key)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, amount, category, description, date, created_at, key);
+  expenses.push(expense);
 
-  const expense = db
-    .prepare("SELECT * FROM expenses WHERE id = ?")
-    .get(id);
+  if (key) {
+    idempotencyStore[key] = expense;
+  }
 
   res.json(expense);
 });
+
+// ✅ GET with filter + sort
 app.get("/expenses", (req, res) => {
-  let query = "SELECT * FROM expenses WHERE 1=1";
-  const params = [];
+  let result = [...expenses];
 
   if (req.query.category) {
-    query += " AND category = ?";
-    params.push(req.query.category);
+    result = result.filter(e => e.category === req.query.category);
   }
 
   if (req.query.sort === "date_desc") {
-    query += " ORDER BY date DESC";
+    result.sort((a, b) => new Date(b.date) - new Date(a.date));
   }
 
-  const expenses = db.prepare(query).all(...params);
-
-  res.json(expenses);
+  res.json(result);
 });
 
-
-
-app.listen(3000, () => console.log("Server running on port 3000"));
+app.listen(3000, () => {
+  console.log("Server running on port 3000");
+});
