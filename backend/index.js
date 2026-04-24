@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 const { v4: uuidv4 } = require("uuid");
 const cors = require("cors");
 
@@ -7,10 +7,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = new sqlite3.Database("./expenses.db");
+const db = new Database("expenses.db");
 
 // Create table
-db.run(`
+db.prepare(`
 CREATE TABLE IF NOT EXISTS expenses (
   id TEXT PRIMARY KEY,
   amount INTEGER,
@@ -20,34 +20,33 @@ CREATE TABLE IF NOT EXISTS expenses (
   created_at TEXT,
   idempotency_key TEXT UNIQUE
 )
-`);
+`).run();
+
 app.post("/expenses", (req, res) => {
   const key = req.headers["idempotency-key"];
 
-  db.get(
-    "SELECT * FROM expenses WHERE idempotency_key = ?",
-    [key],
-    (err, row) => {
-      if (row) return res.json(row);
+  const existing = db
+    .prepare("SELECT * FROM expenses WHERE idempotency_key = ?")
+    .get(key);
 
-      const { amount, category, description, date } = req.body;
+  if (existing) return res.json(existing);
 
-      const id = uuidv4();
-      const created_at = new Date().toISOString();
+  const { amount, category, description, date } = req.body;
 
-      db.run(
-        `INSERT INTO expenses 
-        (id, amount, category, description, date, created_at, idempotency_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, amount, category, description, date, created_at, key],
-        function () {
-          db.get("SELECT * FROM expenses WHERE id = ?", [id], (err, newRow) => {
-            res.json(newRow);
-          });
-        }
-      );
-    }
-  );
+  const id = uuidv4();
+  const created_at = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO expenses 
+    (id, amount, category, description, date, created_at, idempotency_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, amount, category, description, date, created_at, key);
+
+  const expense = db
+    .prepare("SELECT * FROM expenses WHERE id = ?")
+    .get(id);
+
+  res.json(expense);
 });
 app.get("/expenses", (req, res) => {
   let query = "SELECT * FROM expenses WHERE 1=1";
@@ -62,9 +61,9 @@ app.get("/expenses", (req, res) => {
     query += " ORDER BY date DESC";
   }
 
-  db.all(query, params, (err, rows) => {
-    res.json(rows);
-  });
+  const expenses = db.prepare(query).all(...params);
+
+  res.json(expenses);
 });
 
 
