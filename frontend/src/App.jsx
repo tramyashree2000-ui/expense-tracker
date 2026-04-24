@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 
-const API = "http://localhost:3000";
+const API = "https://expense-tracker-x9az.onrender.com";
 
 export default function App() {
   const [form, setForm] = useState({
